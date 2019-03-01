@@ -1,39 +1,41 @@
-FROM node:8-alpine
+# pre-configured node/npm enabled image based on Alpine Linux
+FROM mhart/alpine-node:8.14.0
 
-MAINTAINER vibhu
+# Declare maintainer
+MAINTAINER Markus Nicks <markus.nicks@eon.com>
 
-# install JRE 8 see: https://github.com/docker-library/openjdk/blob/master/8-jre/alpine/Dockerfile
+# Timezone to be set
+ENV TIMEZONE Europe/Berlin
 
-# Default to UTF-8 file.encoding
-ENV LANG C.UTF-8
+# 1. install bash, git & timezone stuff
 
-# add a simple script that can auto-detect the appropriate JAVA_HOME value
-# based on whether the JDK or only the JRE is installed
-RUN { \
-		echo '#!/bin/sh'; \
-		echo 'set -e'; \
-		echo; \
-		echo 'dirname "$(dirname "$(readlink -f "$(which javac || which java)")")"'; \
-	} > /usr/local/bin/docker-java-home \
-	&& chmod +x /usr/local/bin/docker-java-home
-ENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk/jre
-ENV PATH $PATH:/usr/lib/jvm/java-1.8-openjdk/jre/bin:/usr/lib/jvm/java-1.8-openjdk/bin
+# 2. set timezone
 
-ENV JAVA_VERSION 8u131
-ENV JAVA_ALPINE_VERSION 8.131.11-r2
+# 3. add 'npm' user
+RUN	apk update && \
+	apk upgrade && \
+	apk add --update tzdata bash git && \
+	cp /usr/share/zoneinfo/${TIMEZONE} /etc/localtime && \
+	echo "${TIMEZONE}" > /etc/timezone && \
+	rm -rf /var/cache/apk/* && \
+	adduser -S -h /home/npm -s /bin/bash -D npm && \
+	cd /home/npm && \
+	mkdir -p .node_modules_global && \
+	chown -R npm:nogroup /home/npm
 
-RUN set -x \
-	&& apk add --no-cache \
-		openjdk8-jre="$JAVA_ALPINE_VERSION" \
-	&& [ "$JAVA_HOME" = "$(docker-java-home)" ]			
-			
-# install curl, bash and kms-env 0.3.0
-RUN apk upgrade --update && \
-    apk add groff less python py-pip curl bash && \
-	pip install awscli && \
-	apk --purge -v del py-pip && \
-	rm /var/cache/apk/* && \
-    npm install -g kms-env@0.3.0 s3-copy@0.0.2
-    
-COPY env-decrypt s3-cp /usr/local/bin/
-ENTRYPOINT ["/usr/local/bin/env-decrypt"]
+# move global node_modules to 'npm' users home and re-install NPM
+USER npm
+
+RUN cd /home/npm && \
+	npm config set prefix=$HOME/.node_modules_global && \
+	npm install npm --global
+
+ENV HOME=/home/npm PATH=$HOME/.node_modules_global/bin:$PATH
+
+# cleanup not needed binaries installed in the steps before
+USER root
+RUN apk del tzdata
+
+# Set Workdir and default login user 'npm'
+USER npm
+WORKDIR /home/npm
